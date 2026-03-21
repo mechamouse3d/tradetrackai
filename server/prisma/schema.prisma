@@ -1,0 +1,66 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String     @id @default(cuid())
+  auth0Id   String     @unique // Auth0 user ID
+  email     String     @unique
+  name      String
+  photoURL  String?
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  // Relations
+  transactions Transaction[]
+  priceCache   PriceCache[]
+
+  @@index([auth0Id])
+  @@index([email])
+}
+
+model Transaction {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  date      String   // ISO date string
+  type      String   // 'BUY' | 'SELL'
+  account   String   // e.g., TFSA, RRSP
+  exchange  String   // e.g., NASDAQ, TSX
+  symbol    String   // Stock ticker
+  name      String   // Company name
+  shares    Float
+  price     Float
+  currency  String   // USD, CAD, etc.
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([symbol])
+  @@index([date])
+}
+
+model PriceCache {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  symbol    String
+  price     Float
+  timestamp DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, symbol])
+  @@index([userId])
+  @@index([symbol])
+}
