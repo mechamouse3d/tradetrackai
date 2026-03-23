@@ -231,95 +231,139 @@ const App: React.FC = () => {
     setIsDataMgmtOpen(false);
   };
 
-  const handleBulkImport = (newTransactions: Omit<Transaction, 'id'>[]) => {
+  const handleBulkImport = async (newTransactions: Omit<Transaction, 'id'>[]) => {
       const transactionsWithIds = newTransactions.map(t => ({
           ...t,
           type: (t.type?.toString().toUpperCase().includes('SELL') ? 'SELL' : 'BUY') as 'BUY' | 'SELL',
           symbol: (t.symbol || 'UNKNOWN').toUpperCase().trim(),
           exchange: (t.exchange || 'UNKNOWN').toUpperCase().trim(),
           currency: (t.currency || 'USD').toUpperCase(),
+          account: (t.account || 'Default').trim(),
           id: Math.random().toString(36).substr(2, 9)
-      }));
-      setTransactions(prev => [...prev, ...transactionsWithIds]);
+      })) as Transaction[];
+
+      const updatedTransactions = [...transactions, ...transactionsWithIds];
+      setTransactions(updatedTransactions); // Optimistic UI update
+
+      if (user) {
+        try {
+          await dataService.saveTransactions(user.id, updatedTransactions);
+          const freshData = await dataService.loadTransactions(user.id);
+          setTransactions(freshData);
+        } catch (error) {
+          console.error('Failed to sync imported transactions:', error);
+        }
+      }
   };
 
   // --- Calculations ---
 
-  const { portfolio, stats } = useMemo(() => {
-    const groups: Record<string, Transaction[]> = {};
+  const { portfoliosByAccount, stats } = useMemo(() => {
+    const accountGroups: Record<string, Transaction[]> = {};
     transactions.forEach(t => {
-      const symbolKey = `${(t.symbol || 'UNKNOWN').toUpperCase().trim()}_${(t.currency || 'USD').toUpperCase()}`;
-      if (!groups[symbolKey]) groups[symbolKey] = [];
-      groups[symbolKey].push(t);
+      const account = (t.account || 'Default').trim();
+      if (!accountGroups[account]) accountGroups[account] = [];
+      accountGroups[account].push(t);
     });
 
-    const stockSummaries: StockSummary[] = [];
     const portfolioStats: PortfolioStats = {
       USD: emptyCurrencyStats(),
       CAD: emptyCurrencyStats(),
     };
+    const portfoliosByAccount: Record<string, StockSummary[]> = {};
 
-    Object.entries(groups).forEach(([groupKey, txs]) => {
-      txs.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-      const symbol = txs[0].symbol;
-      const currency = txs[0].currency as 'USD' | 'CAD';
-      const statsRef = portfolioStats[currency] || portfolioStats.USD;
+    Object.entries(accountGroups).forEach(([account, accountTxs]) => {
+      const groups: Record<string, Transaction[]> = {};
+      accountTxs.forEach(t => {
+        const symbolKey = `${(t.symbol || 'UNKNOWN').toUpperCase().trim()}_${(t.currency || 'USD').toUpperCase()}`;
+        if (!groups[symbolKey]) groups[symbolKey] = [];
+        groups[symbolKey].push(t);
+      });
 
-      let sharesHeld = 0, totalCost = 0, realizedPL = 0;
+      const stockSummaries: StockSummary[] = [];
 
-      txs.forEach(t => {
-        const shares = Number(t.shares), price = Number(t.price);
-        if (isNaN(shares) || isNaN(price)) return;
-        if (t.type === 'BUY') {
-          sharesHeld += shares;
-          totalCost += shares * price;
-        } else {
-          const avg = sharesHeld > 0 ? totalCost / sharesHeld : 0;
-          realizedPL += (shares * price - (shares * avg));
-          sharesHeld -= shares;
-          totalCost -= (shares * avg);
+      Object.entries(groups).forEach(([groupKey, txs]) => {
+        txs.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+        const symbol = txs[0].symbol;
+        const currency = txs[0].currency as 'USD' | 'CAD';
+        const statsRef = portfolioStats[currency] || portfolioStats.USD;
+
+        let sharesHeld = 0, totalCost = 0, realizedPL = 0;
+
+        txs.forEach(t => {
+          const shares = Number(t.shares), price = Number(t.price);
+          if (isNaN(shares) || isNaN(price)) return;
+          if (t.type === 'BUY') {
+            sharesHeld += shares;
+            totalCost += shares * price;
+          } else {
+            const avg = sharesHeld > 0 ? totalCost / sharesHeld : 0;
+            realizedPL += (shares * price - (shares * avg));
+            sharesHeld -= shares;
+            totalCost -= (shares * avg);
+          }
+        });
+
+        if (sharesHeld < 0.000001) { sharesHeld = 0; totalCost = 0; }
+        const currentPrice = currentPrices[symbol] || null;
+        
+        statsRef.totalRealizedPL += realizedPL;
+        statsRef.totalCostBasis += totalCost;
+        
+        if (currentPrice !== null && sharesHeld > 0) {
+            const marketVal = sharesHeld * currentPrice;
+            statsRef.totalValue += marketVal;
+            statsRef.totalUnrealizedPL += (marketVal - totalCost);
+        } else { 
+            statsRef.totalValue += totalCost; 
         }
+
+        stockSummaries.push({
+          symbol,
+          currency,
+          name: txs[0]?.name || symbol,
+          totalShares: sharesHeld,
+          avgCost: sharesHeld > 0 ? totalCost / sharesHeld : 0,
+          currentPrice,
+          totalInvested: totalCost,
+          realizedPL,
+          transactions: txs
+        });
       });
 
-      if (sharesHeld < 0.000001) { sharesHeld = 0; totalCost = 0; }
-      const currentPrice = currentPrices[symbol] || null;
-      
-      statsRef.totalRealizedPL += realizedPL;
-      statsRef.totalCostBasis += totalCost;
-      
-      if (currentPrice !== null && sharesHeld > 0) {
-          const marketVal = sharesHeld * currentPrice;
-          statsRef.totalValue += marketVal;
-          statsRef.totalUnrealizedPL += (marketVal - totalCost);
-      } else { 
-          statsRef.totalValue += totalCost; 
-      }
-
-      stockSummaries.push({
-        symbol,
-        currency,
-        name: txs[0]?.name || symbol,
-        totalShares: sharesHeld,
-        avgCost: sharesHeld > 0 ? totalCost / sharesHeld : 0,
-        currentPrice,
-        totalInvested: totalCost,
-        realizedPL,
-        transactions: txs
-      });
+      portfoliosByAccount[account] = stockSummaries.sort((a, b) => a.symbol.localeCompare(b.symbol));
     });
 
     return { 
-        portfolio: stockSummaries.sort((a, b) => a.symbol.localeCompare(b.symbol)), 
+        portfoliosByAccount, 
         stats: portfolioStats 
     };
   }, [transactions, currentPrices]);
 
-  const allocationData = portfolio
-    .filter(s => s.totalShares > 0 && s.currentPrice)
-    .map(s => ({ 
-        name: `${s.symbol} (${s.currency})`, 
-        value: (s.currentPrice || 0) * s.totalShares 
-    }));
+  const allocationData = Object.entries(portfoliosByAccount).flatMap(([account, portfolio]) => 
+    portfolio
+      .filter(s => s.totalShares > 0 && s.currentPrice)
+      .map(s => ({ 
+          name: `${s.symbol} (${account})`, 
+          value: (s.currentPrice || 0) * s.totalShares 
+      }))
+  );
+
+  const handleDeleteTransaction = async (id: string) => {
+    try {
+      if (user) {
+        await dataService.deleteTransaction(id);
+        const freshData = await dataService.loadTransactions(user.id);
+        setTransactions(freshData);
+      } else {
+        setTransactions(t => t.filter(x => x.id !== id));
+      }
+    } catch (error) {
+      console.error('Failed to delete transaction:', error);
+      // Fallback: Optimistically update state so it removes from UI and syncs via auto-save
+      setTransactions(t => t.filter(x => x.id !== id));
+    }
+  };
 
   if (isAuthLoading) {
       return (
@@ -412,19 +456,22 @@ const App: React.FC = () => {
                  <ShieldCheck size={12} /> Multi-Currency Analysis Enabled
               </div>
             </div>
-            <PortfolioTable portfolio={portfolio} onDelete={async (id) => {
-              try {
-                await dataService.deleteTransaction(id);
-                if (user) {
-                  const freshData = await dataService.loadTransactions(user.id);
-                  setTransactions(freshData);
-                } else {
-                  setTransactions(t => t.filter(x => x.id !== id));
-                }
-              } catch (error) {
-                console.error('Failed to delete transaction:', error);
-              }
-            }} onEdit={t => { setEditingTransaction(t); setIsFormOpen(true); }} />
+
+            {Object.keys(portfoliosByAccount).length === 0 ? (
+              <PortfolioTable portfolio={[]} onDelete={handleDeleteTransaction} onEdit={t => { setEditingTransaction(t); setIsFormOpen(true); }} />
+            ) : (
+              Object.entries(portfoliosByAccount)
+                .sort(([a], [b]) => a.localeCompare(b))
+                .map(([account, accountPortfolio]) => (
+                <div key={account} className="mb-8 last:mb-0">
+                  <h3 className="text-md font-bold text-slate-700 mb-3 px-2 flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-indigo-500"></div>
+                    {account}
+                  </h3>
+                  <PortfolioTable portfolio={accountPortfolio} onDelete={handleDeleteTransaction} onEdit={t => { setEditingTransaction(t); setIsFormOpen(true); }} />
+                </div>
+              ))
+            )}
             
             {priceSources.length > 0 && (
               <div className="mt-4 px-2 py-3 bg-slate-100/50 rounded-xl border border-slate-200/60">

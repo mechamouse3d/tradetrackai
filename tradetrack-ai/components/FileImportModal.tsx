@@ -17,6 +17,7 @@ const FileImportModal: React.FC<FileImportModalProps> = ({ onImport, onClose }) 
   const [isDragging, setIsDragging] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [account, setAccount] = useState('Default');
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -126,7 +127,8 @@ const FileImportModal: React.FC<FileImportModalProps> = ({ onImport, onClose }) 
       const transactions = await parseDocumentsWithAI(processedFiles);
       
       if (transactions && transactions.length > 0) {
-        onImport(transactions);
+        const transactionsWithAccount = transactions.map(t => ({ ...t, account }));
+        onImport(transactionsWithAccount);
         onClose();
       } else {
         setError("No transactions found. Ensure the document contains clear trade details.");
@@ -169,6 +171,17 @@ const FileImportModal: React.FC<FileImportModalProps> = ({ onImport, onClose }) 
                    Our AI will automatically extract transaction details.
                </p>
                
+               <div className="mb-6">
+                   <label className="block text-slate-700 text-sm font-bold mb-2">Account Name</label>
+                   <input 
+                       type="text" 
+                       value={account}
+                       onChange={e => setAccount(e.target.value)}
+                       placeholder="e.g. TFSA, Personal, Questrade"
+                       className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none transition-all"
+                   />
+               </div>
+
                <div 
                 onDragOver={handleDragOver}
                 onDragLeave={handleDragLeave}
