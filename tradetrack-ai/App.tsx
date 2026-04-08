@@ -7,12 +7,13 @@ import PortfolioTable from './components/PortfolioTable';
 import FileImportModal from './components/FileImportModal';
 import LoginModal from './components/LoginModal';
 import UserMenu from './components/UserMenu';
+import WatchlistPanel from './components/WatchlistPanel';
 import DataManagementModal from './components/DataManagementModal';
 import { useAuth } from './contexts/AuthContext';
 import { fetchCurrentPrices } from './services/geminiService';
 import { dataService } from './services/dataService';
 import { PieChart as RechartsPieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
-import { Plus, Database, TrendingUp, Upload, Loader2, ArrowRight, Sparkles, RefreshCw, ExternalLink, ShieldCheck, Cloud, CloudOff, Clock, HardDrive, PieChart as PieChartIcon, AlertCircle, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, Database, TrendingUp, Upload, Loader2, ArrowRight, Sparkles, RefreshCw, ExternalLink, ShieldCheck, Cloud, CloudOff, Clock, HardDrive, PieChart as PieChartIcon, AlertCircle, Pen } from 'lucide-react';
 
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#6366f1'];
 
@@ -35,13 +36,11 @@ const App: React.FC = () => {
   const [isGuestMode, setIsGuestMode] = useState(false);
   const [isDataLoaded, setIsDataLoaded] = useState(false);
   const [loadedUserId, setLoadedUserId] = useState<string | null>(null);
-  const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
   const [isRefreshingPrices, setIsRefreshingPrices] = useState(false);
   const [priceError, setPriceError] = useState<string | null>(null);
   const [cooldownRemaining, setCooldownRemaining] = useState<number>(0);
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
   const [lastPriceUpdate, setLastPriceUpdate] = useState<Date | null>(null);
-  const [activeAccountIndex, setActiveAccountIndex] = useState(0);
 
   // UI state
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -342,110 +341,25 @@ const App: React.FC = () => {
     };
   }, [transactions, currentPrices]);
 
-  // Initialize expanded rows state when portfolio changes, preserving existing states
-  useEffect(() => {
-    const allKeys = Object.values(portfoliosByAccount).flat().map(p => `${p.symbol}_${p.currency}`);
-    const newRows: Record<string, boolean> = {};
-    let needsUpdate = false;
-    allKeys.forEach(key => {
-        if (expandedRows[key] === undefined) {
-            newRows[key] = true;
-            needsUpdate = true;
-        }
-    });
-    if (needsUpdate) {
-        setExpandedRows(prev => ({ ...prev, ...newRows }));
+  const allocationData = Object.entries(portfoliosByAccount).flatMap(([account, portfolio]) => 
+    portfolio
+      .filter(s => s.totalShares > 0 && s.currentPrice)
+      .map(s => ({ 
+          name: `${s.symbol} (${account})`, 
+          value: (s.currentPrice || 0) * s.totalShares 
+      }))
+  );
+
+  const handleRenameAccount = (oldAccountName: string) => {
+    const newName = window.prompt(`Rename account "${oldAccountName}" to:`, oldAccountName);
+    if (newName && newName.trim() && newName.trim() !== oldAccountName) {
+      const trimmedNewName = newName.trim();
+      setTransactions(prev => prev.map(t => 
+        (t.account || 'Default').trim() === oldAccountName 
+          ? { ...t, account: trimmedNewName } 
+          : t
+      ));
     }
-  }, [portfoliosByAccount, expandedRows]);
-
-  const allocationsByAccount = useMemo(() => {
-    const res: { account: string; data: { name: string; value: number; percentage: number; currency: string }[] }[] = [];
-    Object.entries(portfoliosByAccount).forEach(([account, portfolio]) => {
-      const activeHoldings = portfolio.filter(s => s.totalShares > 0 && s.currentPrice);
-      const totalValue = activeHoldings.reduce((sum, s) => sum + ((s.currentPrice || 0) * s.totalShares), 0);
-      
-      if (totalValue > 0) {
-        res.push({
-          account,
-          data: activeHoldings.map(s => {
-            const val = (s.currentPrice || 0) * s.totalShares;
-            return {
-              name: s.symbol,
-              currency: s.currency,
-              value: val,
-              percentage: (val / totalValue) * 100
-            };
-          }).sort((a, b) => b.value - a.value)
-        });
-      }
-    });
-    return res.sort((a, b) => a.account.localeCompare(b.account));
-  }, [portfoliosByAccount]);
-
-  useEffect(() => {
-    if (activeAccountIndex >= allocationsByAccount.length && allocationsByAccount.length > 0) {
-        setActiveAccountIndex(Math.max(0, allocationsByAccount.length - 1));
-    }
-  }, [allocationsByAccount.length, activeAccountIndex]);
-
-  const profitOverTime = useMemo(() => {
-    const now = new Date();
-    const today = now.toISOString().split('T')[0];
-    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-    const oneYearAgo = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-
-    let dayProfit = 0;
-    let monthProfit = 0;
-    let yearProfit = 0;
-    let lifetimeProfit = 0;
-
-    const activeAccount = allocationsByAccount[activeAccountIndex]?.account;
-    const portfolio = activeAccount ? portfoliosByAccount[activeAccount] : null;
-
-    if (!portfolio) {
-      return { dayProfit, monthProfit, yearProfit, lifetimeProfit };
-    }
-
-    const realizedByDate: Record<string, number> = {};
-    
-    portfolio.forEach(p => {
-       const unrealizedPL = p.totalShares > 0 && p.currentPrice ? (p.currentPrice - p.avgCost) * p.totalShares : 0;
-       lifetimeProfit += p.realizedPL + unrealizedPL;
-
-       let sharesHeld = 0;
-       let totalCost = 0;
-       
-       const sortedTxs = [...p.transactions].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-       
-       sortedTxs.forEach(tx => {
-          if (tx.type === 'BUY') {
-             sharesHeld += tx.shares;
-             totalCost += tx.shares * tx.price;
-          } else if (tx.type === 'SELL') {
-             const avgCost = sharesHeld > 0 ? totalCost / sharesHeld : 0;
-             const profit = (tx.price - avgCost) * tx.shares;
-             sharesHeld -= tx.shares;
-             totalCost -= tx.shares * avgCost;
-
-             if (!realizedByDate[tx.date]) realizedByDate[tx.date] = 0;
-             realizedByDate[tx.date] += profit; 
-          }
-       });
-    });
-
-    Object.entries(realizedByDate).forEach(([date, profit]) => {
-       if (date >= today) dayProfit += profit;
-       if (date >= thirtyDaysAgo) monthProfit += profit;
-       if (date >= oneYearAgo) yearProfit += profit;
-    });
-
-    return { dayProfit, monthProfit, yearProfit, lifetimeProfit };
-  }, [portfoliosByAccount, allocationsByAccount, activeAccountIndex]);
-
-  const toggleAllRows = (expand: boolean) => {
-    setExpandedRows(currentRows => 
-        Object.fromEntries(Object.keys(currentRows).map(key => [key, expand]))
-    );
   };
 
   const handleDeleteTransaction = async (id: string) => {
@@ -550,30 +464,31 @@ const App: React.FC = () => {
 
         <div className="w-full">
             <div className="flex items-center justify-between mb-4 px-2">
-              <div className="flex items-center gap-4">
-                <h2 className="text-sm font-black text-slate-400 uppercase tracking-[0.2em] flex items-center gap-2">Holdings</h2>
-                <div className="flex items-center gap-2">
-                  <button onClick={() => toggleAllRows(true)} className="text-xs font-semibold text-slate-500 hover:text-indigo-600 transition-colors">Expand All</button>
-                  <button onClick={() => toggleAllRows(false)} className="text-xs font-semibold text-slate-500 hover:text-indigo-600 transition-colors">Collapse All</button>
-                </div>
-              </div>
+              <h2 className="text-sm font-black text-slate-400 uppercase tracking-[0.2em] flex items-center gap-2">Holdings</h2>
               <div className="flex items-center gap-2 text-[10px] text-indigo-400 bg-indigo-50/50 px-2.5 py-1 rounded-full font-bold">
                  <ShieldCheck size={12} /> Multi-Currency Analysis Enabled
               </div>
             </div>
 
             {Object.keys(portfoliosByAccount).length === 0 ? (
-              <PortfolioTable portfolio={[]} onDelete={handleDeleteTransaction} onEdit={t => { setEditingTransaction(t); setIsFormOpen(true); }} expandedRows={expandedRows} setExpandedRows={setExpandedRows} />
+              <PortfolioTable portfolio={[]} onDelete={handleDeleteTransaction} onEdit={t => { setEditingTransaction(t); setIsFormOpen(true); }} />
             ) : (
               Object.entries(portfoliosByAccount)
                 .sort(([a], [b]) => a.localeCompare(b))
                 .map(([account, accountPortfolio]) => (
                 <div key={account} className="mb-8 last:mb-0">
-                  <h3 className="text-md font-bold text-slate-700 mb-3 px-2 flex items-center gap-2">
+                  <h3 className="text-md font-bold text-slate-700 mb-3 px-2 flex items-center gap-2 group">
                     <div className="w-2 h-2 rounded-full bg-indigo-500"></div>
                     {account}
+                    <button 
+                      onClick={() => handleRenameAccount(account)}
+                      className="ml-1 p-1 text-slate-300 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors opacity-0 group-hover:opacity-100"
+                      title="Rename Account Group"
+                    >
+                      <Pen size={14} />
+                    </button>
                   </h3>
-                  <PortfolioTable portfolio={accountPortfolio} onDelete={handleDeleteTransaction} onEdit={t => { setEditingTransaction(t); setIsFormOpen(true); }} expandedRows={expandedRows} setExpandedRows={setExpandedRows} />
+                  <PortfolioTable portfolio={accountPortfolio} onDelete={handleDeleteTransaction} onEdit={t => { setEditingTransaction(t); setIsFormOpen(true); }} />
                 </div>
               ))
             )}
@@ -603,89 +518,36 @@ const App: React.FC = () => {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            <div className="lg:col-span-2 bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col">
-                <div className="flex items-center justify-between mb-6">
-                    <h3 className="text-slate-800 text-xs font-black uppercase tracking-widest flex items-center gap-2">
-                        <PieChartIcon size={14} className="text-indigo-500" /> Allocation
-                    </h3>
-                    {allocationsByAccount.length > 1 && (
-                        <div className="flex items-center gap-2">
-                            <button 
-                                onClick={() => setActiveAccountIndex(prev => prev === 0 ? allocationsByAccount.length - 1 : prev - 1)}
-                                className="p-1 rounded-full bg-slate-50 hover:bg-slate-100 text-slate-500 transition-colors"
-                            >
-                                <ChevronLeft size={16} />
-                            </button>
-                            <span className="text-xs font-bold text-slate-600">{allocationsByAccount[activeAccountIndex]?.account}</span>
-                            <button 
-                                onClick={() => setActiveAccountIndex(prev => (prev + 1) % allocationsByAccount.length)}
-                                className="p-1 rounded-full bg-slate-50 hover:bg-slate-100 text-slate-500 transition-colors"
-                            >
-                                <ChevronRight size={16} />
-                            </button>
-                        </div>
-                    )}
-                </div>
-                
-                <div className="flex-1 flex flex-col justify-center">
-                    {allocationsByAccount.length > 0 && allocationsByAccount[activeAccountIndex] ? (
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-center h-64">
-                            <ResponsiveContainer width="100%" height="100%" minHeight={250}>
-                                <RechartsPieChart>
-                                    <Pie data={allocationsByAccount[activeAccountIndex].data} cx="50%" cy="50%" innerRadius={55} outerRadius={80} paddingAngle={8} dataKey="value" stroke="none">
-                                        {allocationsByAccount[activeAccountIndex].data.map((_, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
-                                    </Pie>
-                                    <Tooltip formatter={(v: number, name: string, props: any) => [`${props.payload.currency === 'CAD' ? 'C$' : '$'}${v.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`, name]} contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }} />
-                                </RechartsPieChart>
-                            </ResponsiveContainer>
-                            <div className="space-y-2 max-h-full overflow-y-auto pr-2">
-                                {allocationsByAccount.length === 1 && (
-                                     <h4 className="text-xs font-bold text-slate-500 mb-3">{allocationsByAccount[activeAccountIndex].account}</h4>
-                                )}
-                                {allocationsByAccount[activeAccountIndex].data.map((e, i) => (
-                                    <div key={e.name} className="flex items-center justify-between text-xs p-2.5 bg-slate-50/50 rounded-lg">
-                                        <div className="flex items-center gap-3">
-                                            <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: COLORS[i % COLORS.length] }}></div>
-                                            <span className="text-slate-700 font-bold">{e.name}</span>
-                                        </div>
-                                        <div className="flex items-center gap-3">
-                                            <span className="text-slate-500 font-medium">{e.percentage.toFixed(1)}%</span>
-                                            <span className="text-slate-900 font-bold">{e.currency === 'CAD' ? 'C$' : '$'}{e.value.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
-                                        </div>
+            <div className="lg:col-span-2 bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                <h3 className="text-slate-800 text-xs font-black uppercase tracking-widest mb-6 flex items-center gap-2">
+                    <PieChartIcon size={14} className="text-indigo-500" /> Allocation
+                </h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-center h-64">
+                    {allocationData.length > 0 ? (
+                        <>
+                        <ResponsiveContainer width="100%" height="100%" minHeight={250}>
+                            <RechartsPieChart>
+                                <Pie data={allocationData} cx="50%" cy="50%" innerRadius={55} outerRadius={80} paddingAngle={8} dataKey="value" stroke="none">
+                                    {allocationData.map((_, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
+                                </Pie>
+                                <Tooltip formatter={(v: number, name: string) => [`$${v.toLocaleString()}`, name]} contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }} />
+                            </RechartsPieChart>
+                        </ResponsiveContainer>
+                        <div className="space-y-2 max-h-full overflow-y-auto pr-2">
+                            {allocationData.map((e, i) => (
+                                <div key={e.name} className="flex items-center justify-between text-xs p-2.5 bg-slate-50/50 rounded-lg">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: COLORS[i % COLORS.length] }}></div>
+                                        <span className="text-slate-700 font-bold">{e.name}</span>
                                     </div>
-                                ))}
-                            </div>
+                                    <span className="text-slate-900 font-medium">${e.value.toLocaleString()}</span>
+                                </div>
+                            ))}
                         </div>
+                        </>
                     ) : (
-                        <div className="h-64 flex items-center justify-center text-slate-300 text-xs italic border-2 border-dashed border-slate-100 rounded-2xl">No holdings to visualize.</div>
+                        <div className="col-span-2 h-full flex items-center justify-center text-slate-300 text-xs italic border-2 border-dashed border-slate-100 rounded-2xl">No holdings to visualize.</div>
                     )}
-                </div>
-
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6 pt-6 border-t border-slate-100">
-                    <div className="flex flex-col">
-                        <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-1">Today (Realized)</span>
-                        <span className={`text-sm font-black ${profitOverTime.dayProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                            {profitOverTime.dayProfit >= 0 ? '+' : '-'}${Math.abs(profitOverTime.dayProfit).toLocaleString(undefined, {minimumFractionDigits: 2})}
-                        </span>
-                    </div>
-                    <div className="flex flex-col">
-                        <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-1">1 Month (Realized)</span>
-                        <span className={`text-sm font-black ${profitOverTime.monthProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                            {profitOverTime.monthProfit >= 0 ? '+' : '-'}${Math.abs(profitOverTime.monthProfit).toLocaleString(undefined, {minimumFractionDigits: 2})}
-                        </span>
-                    </div>
-                    <div className="flex flex-col">
-                        <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-1">1 Year (Realized)</span>
-                        <span className={`text-sm font-black ${profitOverTime.yearProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                            {profitOverTime.yearProfit >= 0 ? '+' : '-'}${Math.abs(profitOverTime.yearProfit).toLocaleString(undefined, {minimumFractionDigits: 2})}
-                        </span>
-                    </div>
-                    <div className="flex flex-col">
-                        <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-1">Lifetime (Total P/L)</span>
-                        <span className={`text-sm font-black ${profitOverTime.lifetimeProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                            {profitOverTime.lifetimeProfit >= 0 ? '+' : '-'}${Math.abs(profitOverTime.lifetimeProfit).toLocaleString(undefined, {minimumFractionDigits: 2})}
-                        </span>
-                    </div>
                 </div>
             </div>
             <div className="bg-indigo-600 p-8 rounded-2xl text-white shadow-xl relative overflow-hidden flex flex-col justify-between">
@@ -696,6 +558,10 @@ const App: React.FC = () => {
                 </div>
                 <button onClick={() => setIsDataMgmtOpen(true)} className="w-full py-3 bg-white/10 hover:bg-white/20 text-white rounded-xl text-xs font-bold transition-colors backdrop-blur-sm border border-white/10">Open Data Manager</button>
             </div>
+        </div>
+        
+        <div className="mt-8">
+            <WatchlistPanel />
         </div>
       </main>
 

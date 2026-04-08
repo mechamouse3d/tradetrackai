@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { StockSummary, Transaction } from '../types';
 import { ChevronDown, ChevronRight, CircleCheck, Pen, Trash2 } from 'lucide-react';
 
@@ -6,11 +6,10 @@ interface PortfolioTableProps {
   portfolio: StockSummary[];
   onDelete: (id: string) => void;
   onEdit: (transaction: Transaction) => void;
-  expandedRows: Record<string, boolean>;
-  setExpandedRows: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
 }
 
-const PortfolioTable: React.FC<PortfolioTableProps> = ({ portfolio, onDelete, onEdit, expandedRows, setExpandedRows }) => {
+const PortfolioTable: React.FC<PortfolioTableProps> = ({ portfolio, onDelete, onEdit }) => {
+  const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
 
   const toggleRow = (symbolKey: string) => {
     setExpandedRows(prev => ({ ...prev, [symbolKey]: !prev[symbolKey] }));

@@ -6,7 +6,7 @@
  * - Authenticated users: PostgreSQL via backend API
  */
 
-import { Transaction } from '../types';
+import { Transaction, WatchlistGroup } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
@@ -292,5 +292,47 @@ export const dataService = {
     } catch (error) {
       console.error('❌ Price sync error:', error);
     }
+  },
+
+  /**
+   * Load user's watchlists
+   */
+  loadWatchlists: async (userId: string): Promise<WatchlistGroup[]> => {
+    const key = `watchlists_${userId}`;
+    const saved = localStorage.getItem(key);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        // Migration from legacy flat string array
+        if (Array.isArray(parsed)) {
+          if (parsed.length > 0 && typeof parsed[0] === 'string') {
+            return [{ id: 'default', name: 'My Watchlist', symbols: parsed }];
+          }
+          return parsed;
+        }
+      } catch (e) {
+        console.error("Failed to parse watchlists", e);
+      }
+    }
+    
+    // Check for old legacy key before returning empty
+    const legacyKey = `watchlist_${userId}`;
+    const legacySaved = localStorage.getItem(legacyKey);
+    if (legacySaved) {
+      try {
+        return [{ id: 'default', name: 'My Watchlist', symbols: JSON.parse(legacySaved) }];
+      } catch (e) {}
+    }
+    
+    return [{ id: 'default', name: 'My Watchlist', symbols: [] }];
+  },
+
+  /**
+   * Save user's watchlists
+   */
+  saveWatchlists: async (userId: string, watchlists: WatchlistGroup[]): Promise<void> => {
+    const key = `watchlists_${userId}`;
+    localStorage.setItem(key, JSON.stringify(watchlists));
+    console.log(`[dataService] Saved ${watchlists.length} watchlist groups to localStorage`);
   },
 };

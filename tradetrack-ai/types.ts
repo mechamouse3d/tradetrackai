@@ -44,3 +44,9 @@ export interface PortfolioStats {
   USD: CurrencyStats;
   CAD: CurrencyStats;
 }
+
+export interface WatchlistGroup {
+  id: string;
+  name: string;
+  symbols: string[];
+}
