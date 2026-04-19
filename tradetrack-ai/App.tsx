@@ -13,7 +13,7 @@ import { useAuth } from './contexts/AuthContext';
 import { fetchCurrentPrices } from './services/geminiService';
 import { dataService } from './services/dataService';
 import { PieChart as RechartsPieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
-import { Plus, Database, TrendingUp, Upload, Loader2, ArrowRight, Sparkles, RefreshCw, ExternalLink, ShieldCheck, Cloud, CloudOff, Clock, HardDrive, PieChart as PieChartIcon, AlertCircle, Pen } from 'lucide-react';
+import { Plus, Database, TrendingUp, Upload, Loader2, ArrowRight, Sparkles, RefreshCw, ExternalLink, ShieldCheck, Cloud, CloudOff, Clock, HardDrive, PieChart as PieChartIcon, AlertCircle, Pen, ChevronLeft, ChevronRight } from 'lucide-react';
 
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#6366f1'];
 
@@ -41,6 +41,7 @@ const App: React.FC = () => {
   const [cooldownRemaining, setCooldownRemaining] = useState<number>(0);
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
   const [lastPriceUpdate, setLastPriceUpdate] = useState<Date | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // UI state
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -48,6 +49,7 @@ const App: React.FC = () => {
   const [isImportOpen, setIsImportOpen] = useState(false);
   const [isLoginOpen, setIsLoginOpen] = useState(false);
   const [isDataMgmtOpen, setIsDataMgmtOpen] = useState(false);
+  const [activeAllocationTab, setActiveAllocationTab] = useState<string>('ALL');
 
   // Refs for tracking and concurrency control
   const isFetchingRef = useRef(false);
@@ -77,6 +79,7 @@ const App: React.FC = () => {
     if (isAuthLoading) return;
     setIsDataLoaded(false);
     setLoadedUserId(null);
+    setLoadError(null);
 
     const loadData = async () => {
       const currentUserId = user?.id || 'demo';
@@ -95,6 +98,7 @@ const App: React.FC = () => {
         setIsDataLoaded(true);
       } catch (error) {
         console.error('Failed to load data:', error);
+        setLoadError(error instanceof Error ? error.message : 'Failed to load portfolio data');
         // Fallback to empty state
         setTransactions([]);
         setCurrentPrices({});
@@ -165,7 +169,7 @@ const App: React.FC = () => {
   // 3. User-Specific Auto-Save
   useEffect(() => {
     const currentUserId = user?.id || 'demo';
-    if (!isDataLoaded || isAuthLoading || loadedUserId !== currentUserId) {
+    if (!isDataLoaded || isAuthLoading || loadedUserId !== currentUserId || loadError) {
       return;
     }
 
@@ -261,10 +265,16 @@ const App: React.FC = () => {
 
   const { portfoliosByAccount, stats } = useMemo(() => {
     const accountGroups: Record<string, Transaction[]> = {};
+    const accountNames: Record<string, string> = {};
+
     transactions.forEach(t => {
-      const account = (t.account || 'Default').trim();
-      if (!accountGroups[account]) accountGroups[account] = [];
-      accountGroups[account].push(t);
+      const rawAccount = (t.account || 'Default').trim();
+      const accountKey = rawAccount.toUpperCase();
+      if (!accountGroups[accountKey]) {
+        accountGroups[accountKey] = [];
+        accountNames[accountKey] = rawAccount;
+      }
+      accountGroups[accountKey].push(t);
     });
 
     const portfolioStats: PortfolioStats = {
@@ -273,10 +283,11 @@ const App: React.FC = () => {
     };
     const portfoliosByAccount: Record<string, StockSummary[]> = {};
 
-    Object.entries(accountGroups).forEach(([account, accountTxs]) => {
+    Object.entries(accountGroups).forEach(([accountKey, accountTxs]) => {
+      const displayAccount = accountNames[accountKey];
       const groups: Record<string, Transaction[]> = {};
       accountTxs.forEach(t => {
-        const symbolKey = `${(t.symbol || 'UNKNOWN').toUpperCase().trim()}_${(t.currency || 'USD').toUpperCase()}`;
+        const symbolKey = (t.symbol || 'UNKNOWN').toUpperCase().trim();
         if (!groups[symbolKey]) groups[symbolKey] = [];
         groups[symbolKey].push(t);
       });
@@ -332,7 +343,7 @@ const App: React.FC = () => {
         });
       });
 
-      portfoliosByAccount[account] = stockSummaries.sort((a, b) => a.symbol.localeCompare(b.symbol));
+      portfoliosByAccount[displayAccount] = stockSummaries.sort((a, b) => a.symbol.localeCompare(b.symbol));
     });
 
     return { 
@@ -341,21 +352,41 @@ const App: React.FC = () => {
     };
   }, [transactions, currentPrices]);
 
-  const allocationData = Object.entries(portfoliosByAccount).flatMap(([account, portfolio]) => 
-    portfolio
-      .filter(s => s.totalShares > 0 && s.currentPrice)
-      .map(s => ({ 
-          name: `${s.symbol} (${account})`, 
-          value: (s.currentPrice || 0) * s.totalShares 
-      }))
-  );
+  const { currentAllocationData, currentAllocationTotal, allocationTabs, currentTabIndex } = useMemo(() => {
+    const tabs = ['ALL', ...Object.keys(portfoliosByAccount).sort()];
+    const activeTab = tabs.includes(activeAllocationTab) ? activeAllocationTab : 'ALL';
+    const tabIndex = tabs.indexOf(activeTab);
+
+    let data: { name: string; value: number }[] = [];
+
+    if (activeTab === 'ALL') {
+      data = Object.entries(portfoliosByAccount).flatMap(([account, portfolio]) =>
+        portfolio
+          .filter(s => s.totalShares > 0 && s.currentPrice)
+          .map(s => ({ name: `${s.symbol} (${account})`, value: (s.currentPrice || 0) * s.totalShares }))
+      );
+    } else {
+      data = (portfoliosByAccount[activeTab] || [])
+          .filter(s => s.totalShares > 0 && s.currentPrice)
+          .map(s => ({ name: s.symbol, value: (s.currentPrice || 0) * s.totalShares }));
+    }
+
+    data.sort((a, b) => b.value - a.value);
+    const total = data.reduce((sum, item) => sum + item.value, 0);
+
+    return { currentAllocationData: data, currentAllocationTotal: total, allocationTabs: tabs, currentTabIndex: tabIndex };
+  }, [portfoliosByAccount, activeAllocationTab]);
+
+  const handlePrevTab = () => setActiveAllocationTab(allocationTabs[(currentTabIndex - 1 + allocationTabs.length) % allocationTabs.length]);
+  const handleNextTab = () => setActiveAllocationTab(allocationTabs[(currentTabIndex + 1) % allocationTabs.length]);
+
 
   const handleRenameAccount = (oldAccountName: string) => {
     const newName = window.prompt(`Rename account "${oldAccountName}" to:`, oldAccountName);
     if (newName && newName.trim() && newName.trim() !== oldAccountName) {
       const trimmedNewName = newName.trim();
       setTransactions(prev => prev.map(t => 
-        (t.account || 'Default').trim() === oldAccountName 
+        (t.account || 'Default').trim().toUpperCase() === oldAccountName.toUpperCase()
           ? { ...t, account: trimmedNewName } 
           : t
       ));
@@ -451,7 +482,7 @@ const App: React.FC = () => {
               <button onClick={() => setIsImportOpen(true)} className="hidden sm:flex items-center gap-2 bg-white border border-slate-300 px-3.5 py-1.5 rounded-xl font-medium text-xs">
                 <Upload size={14} /> Import
               </button>
-              <button onClick={() => setIsFormOpen(true)} className="flex items-center gap-2 bg-slate-900 text-white px-3.5 py-1.5 rounded-xl font-medium text-xs shadow-md">
+              <button onClick={() => { setEditingTransaction(null); setIsFormOpen(true); }} className="flex items-center gap-2 bg-slate-900 text-white px-3.5 py-1.5 rounded-xl font-medium text-xs shadow-md">
                 <Plus size={14} /> New
               </button>
               <UserMenu onLoginClick={() => setIsLoginOpen(true)} onManageDataClick={() => setIsDataMgmtOpen(true)} />
@@ -470,27 +501,85 @@ const App: React.FC = () => {
               </div>
             </div>
 
+            {loadError && (
+              <div className="bg-rose-50 border border-rose-200 text-rose-700 px-4 py-3 rounded-xl mb-6 flex items-center justify-between shadow-sm">
+                <div className="flex items-center gap-3">
+                  <AlertCircle size={20} className="text-rose-500" />
+                  <div>
+                    <p className="font-bold text-sm">Error Loading Portfolio</p>
+                    <p className="text-xs opacity-90">{loadError}. Auto-save has been disabled to protect your data.</p>
+                  </div>
+                </div>
+                <button onClick={() => setReloadTriggerState(prev => prev + 1)} className="px-3 py-1.5 bg-rose-100 hover:bg-rose-200 rounded-lg text-xs font-bold transition-colors">
+                  Retry
+                </button>
+              </div>
+            )}
+
             {Object.keys(portfoliosByAccount).length === 0 ? (
               <PortfolioTable portfolio={[]} onDelete={handleDeleteTransaction} onEdit={t => { setEditingTransaction(t); setIsFormOpen(true); }} />
             ) : (
               Object.entries(portfoliosByAccount)
                 .sort(([a], [b]) => a.localeCompare(b))
-                .map(([account, accountPortfolio]) => (
-                <div key={account} className="mb-8 last:mb-0">
-                  <h3 className="text-md font-bold text-slate-700 mb-3 px-2 flex items-center gap-2 group">
-                    <div className="w-2 h-2 rounded-full bg-indigo-500"></div>
-                    {account}
-                    <button 
-                      onClick={() => handleRenameAccount(account)}
-                      className="ml-1 p-1 text-slate-300 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors opacity-0 group-hover:opacity-100"
-                      title="Rename Account Group"
-                    >
-                      <Pen size={14} />
-                    </button>
-                  </h3>
-                  <PortfolioTable portfolio={accountPortfolio} onDelete={handleDeleteTransaction} onEdit={t => { setEditingTransaction(t); setIsFormOpen(true); }} />
-                </div>
-              ))
+                .map(([account, accountPortfolio]) => {
+                  const totals = {
+                    USD: { value: 0, unrealized: 0, realized: 0 },
+                    CAD: { value: 0, unrealized: 0, realized: 0 }
+                  };
+
+                  accountPortfolio.forEach(s => {
+                    const cur = (s.currency === 'CAD' ? 'CAD' : 'USD') as 'CAD' | 'USD';
+                    const value = s.currentPrice !== null && s.totalShares > 0 
+                      ? s.totalShares * s.currentPrice 
+                      : s.totalInvested;
+                    
+                    const unrealized = s.currentPrice !== null && s.totalShares > 0
+                      ? value - s.totalInvested
+                      : 0;
+
+                    totals[cur].value += value;
+                    totals[cur].unrealized += unrealized;
+                    totals[cur].realized += (s.realizedPL || 0);
+                  });
+
+                  return (
+                    <div key={account} className="mb-8 last:mb-0">
+                      <h3 className="text-md font-bold text-slate-700 mb-3 px-2 flex flex-col sm:flex-row sm:items-center justify-between gap-3 group">
+                        <div className="flex items-center gap-2">
+                          <div className="w-2 h-2 rounded-full bg-indigo-500"></div>
+                          {account}
+                          <button 
+                            onClick={() => handleRenameAccount(account)}
+                            className="ml-1 p-1 text-slate-300 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors opacity-0 group-hover:opacity-100"
+                            title="Rename Account Group"
+                          >
+                            <Pen size={14} />
+                          </button>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          {['CAD', 'USD'].map(cur => {
+                            const t = totals[cur as 'CAD' | 'USD'];
+                            if (t.value === 0 && t.realized === 0 && t.unrealized === 0) return null;
+                            return (
+                              <div key={cur} className="flex flex-col items-end justify-center bg-white border border-slate-200 px-3 py-1.5 rounded-xl shadow-sm">
+                                <span className="text-xs font-black text-slate-700">{cur} ${t.value.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
+                                <div className="flex items-center gap-2 text-[10px] font-bold mt-0.5">
+                                  <span className={t.unrealized >= 0 ? 'text-emerald-500' : 'text-rose-500'} title="Unrealized P/L">
+                                    U: {t.unrealized >= 0 ? '+' : ''}${t.unrealized.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                                  </span>
+                                  <span className={t.realized >= 0 ? 'text-emerald-500' : 'text-rose-500'} title="Realized P/L">
+                                    R: {t.realized >= 0 ? '+' : ''}${t.realized.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                                  </span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </h3>
+                      <PortfolioTable portfolio={accountPortfolio} onDelete={handleDeleteTransaction} onEdit={t => { setEditingTransaction(t); setIsFormOpen(true); }} />
+                    </div>
+                  );
+                })
             )}
             
             {priceSources.length > 0 && (
@@ -519,34 +608,51 @@ const App: React.FC = () => {
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             <div className="lg:col-span-2 bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-                <h3 className="text-slate-800 text-xs font-black uppercase tracking-widest mb-6 flex items-center gap-2">
-                    <PieChartIcon size={14} className="text-indigo-500" /> Allocation
-                </h3>
+                <div className="flex items-center justify-between mb-6">
+                    <h3 className="text-slate-800 text-xs font-black uppercase tracking-widest flex items-center gap-2">
+                        <PieChartIcon size={14} className="text-indigo-500" /> Allocation
+                    </h3>
+                    {allocationTabs.length > 2 && (
+                        <div className="flex items-center gap-2 bg-slate-50 px-1.5 py-1 rounded-lg border border-slate-200">
+                            <button onClick={handlePrevTab} className="p-1 hover:bg-white rounded shadow-sm text-slate-500 transition-all"><ChevronLeft size={14}/></button>
+                            <span className="text-[10px] font-bold text-slate-700 min-w-[90px] text-center uppercase tracking-wider truncate">
+                                {allocationTabs[currentTabIndex] === 'ALL' ? 'All Accounts' : allocationTabs[currentTabIndex]}
+                            </span>
+                            <button onClick={handleNextTab} className="p-1 hover:bg-white rounded shadow-sm text-slate-500 transition-all"><ChevronRight size={14}/></button>
+                        </div>
+                    )}
+                </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-center h-64">
-                    {allocationData.length > 0 ? (
+                    {currentAllocationData.length > 0 ? (
                         <>
                         <ResponsiveContainer width="100%" height="100%" minHeight={250}>
                             <RechartsPieChart>
-                                <Pie data={allocationData} cx="50%" cy="50%" innerRadius={55} outerRadius={80} paddingAngle={8} dataKey="value" stroke="none">
-                                    {allocationData.map((_, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
+                                <Pie data={currentAllocationData} cx="50%" cy="50%" innerRadius={55} outerRadius={80} paddingAngle={8} dataKey="value" stroke="none">
+                                    {currentAllocationData.map((_, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
                                 </Pie>
-                                <Tooltip formatter={(v: number, name: string) => [`$${v.toLocaleString()}`, name]} contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }} />
+                                <Tooltip formatter={(v: number, name: string) => [`$${v.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`, name]} contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }} />
                             </RechartsPieChart>
                         </ResponsiveContainer>
                         <div className="space-y-2 max-h-full overflow-y-auto pr-2">
-                            {allocationData.map((e, i) => (
-                                <div key={e.name} className="flex items-center justify-between text-xs p-2.5 bg-slate-50/50 rounded-lg">
-                                    <div className="flex items-center gap-3">
-                                        <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: COLORS[i % COLORS.length] }}></div>
-                                        <span className="text-slate-700 font-bold">{e.name}</span>
+                            {currentAllocationData.map((e, i) => {
+                                const percent = currentAllocationTotal > 0 ? ((e.value / currentAllocationTotal) * 100).toFixed(1) : '0.0';
+                                return (
+                                    <div key={e.name} className="flex items-center justify-between text-xs p-2.5 bg-slate-50/50 rounded-lg hover:bg-slate-100/50 transition-colors">
+                                        <div className="flex items-center gap-3 overflow-hidden">
+                                            <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: COLORS[i % COLORS.length] }}></div>
+                                            <span className="text-slate-700 font-bold truncate">{e.name}</span>
+                                        </div>
+                                        <div className="flex items-center gap-3 shrink-0 ml-2">
+                                            <span className="text-slate-400 font-semibold w-8 text-right">{percent}%</span>
+                                            <span className="text-slate-900 font-bold w-16 text-right">${e.value.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
+                                        </div>
                                     </div>
-                                    <span className="text-slate-900 font-medium">${e.value.toLocaleString()}</span>
-                                </div>
-                            ))}
+                                );
+                            })}
                         </div>
                         </>
                     ) : (
-                        <div className="col-span-2 h-full flex items-center justify-center text-slate-300 text-xs italic border-2 border-dashed border-slate-100 rounded-2xl">No holdings to visualize.</div>
+                        <div className="col-span-2 h-full flex items-center justify-center text-slate-400 text-xs italic border-2 border-dashed border-slate-100 rounded-2xl bg-slate-50/50">No holdings to visualize in this view.</div>
                     )}
                 </div>
             </div>
@@ -565,7 +671,7 @@ const App: React.FC = () => {
         </div>
       </main>
 
-      {isFormOpen && <TransactionForm onSave={handleSaveTransaction} onClose={() => setIsFormOpen(false)} initialData={editingTransaction || undefined} />}
+      {isFormOpen && <TransactionForm onSave={handleSaveTransaction} onClose={() => { setIsFormOpen(false); setEditingTransaction(null); }} initialData={editingTransaction || undefined} existingAccounts={Object.keys(portfoliosByAccount)} />}
       {isImportOpen && <FileImportModal onImport={handleBulkImport} onClose={() => setIsImportOpen(false)} />}
       {isLoginOpen && <LoginModal onClose={() => setIsLoginOpen(false)} />}
       {isDataMgmtOpen && <DataManagementModal transactionsCount={transactions.length} onClearCache={clearUserCache} onExport={() => {

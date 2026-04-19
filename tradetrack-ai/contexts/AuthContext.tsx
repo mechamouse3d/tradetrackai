@@ -89,16 +89,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               // Sync demo data to API under authenticated user
               if (demoTransactions.length > 0) {
                 try {
-                  await dataService.saveTransactions(auth0User.sub || 'unknown', demoTransactions);
+                  const existingTx = await dataService.loadTransactions(auth0User.sub || 'unknown');
+                  const combinedTx = [...existingTx, ...demoTransactions];
+                  const uniqueTx = Array.from(new Map(combinedTx.map(t => [t.id, t])).values());
+                  await dataService.saveTransactions(auth0User.sub || 'unknown', uniqueTx);
                   console.log('[AUTH] ✅ Demo transactions migrated to API');
+                  localStorage.removeItem('transactions_demo');
                 } catch (e) {
                   console.error('[AUTH] Failed to migrate transactions:', e);
                 }
               }
               if (Object.keys(demoPrices).length > 0) {
                 try {
-                  await dataService.savePrices(auth0User.sub || 'unknown', demoPrices);
+                  const existingPrices = await dataService.loadPrices(auth0User.sub || 'unknown');
+                  const combinedPrices = { ...existingPrices, ...demoPrices };
+                  await dataService.savePrices(auth0User.sub || 'unknown', combinedPrices);
                   console.log('[AUTH] ✅ Demo prices migrated to API');
+                  localStorage.removeItem('prices_demo');
                 } catch (e) {
                   console.error('[AUTH] Failed to migrate prices:', e);
                 }

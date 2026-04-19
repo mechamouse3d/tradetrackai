@@ -7,27 +7,45 @@ interface TransactionFormProps {
   onSave: (transaction: Transaction | Omit<Transaction, 'id'>) => void;
   onClose: () => void;
   initialData?: Transaction;
+  existingAccounts?: string[];
 }
 
-const TransactionForm: React.FC<TransactionFormProps> = ({ onSave, onClose, initialData }) => {
+const formatForDateInput = (dateStr?: string) => {
+  if (!dateStr) return new Date().toISOString().split('T')[0];
+  // If it's already YYYY-MM-DD, bypass to avoid timezone shifts
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr;
+  
+  try {
+    const d = new Date(dateStr);
+    if (!isNaN(d.getTime())) {
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    }
+  } catch (e) {}
+  return dateStr.split('T')[0]; // fallback
+};
+
+const TransactionForm: React.FC<TransactionFormProps> = ({ onSave, onClose, initialData, existingAccounts = [] }) => {
   const [isAIProcessing, setIsAIProcessing] = useState(false);
   const [aiInput, setAiInput] = useState('');
   const [formData, setFormData] = useState({
-    date: new Date().toISOString().split('T')[0],
-    type: 'BUY' as TransactionType,
-    symbol: '',
-    name: '',
-    shares: '',
-    price: '',
-    account: 'TFSA',
-    exchange: 'NASDAQ',
-    currency: 'USD'
+    date: initialData ? formatForDateInput(initialData.date) : new Date().toISOString().split('T')[0],
+    type: initialData?.type || ('BUY' as TransactionType),
+    symbol: initialData?.symbol || '',
+    name: initialData?.name || '',
+    shares: initialData?.shares?.toString() || '',
+    price: initialData?.price?.toString() || '',
+    account: initialData?.account || 'TFSA',
+    exchange: initialData?.exchange || 'NASDAQ',
+    currency: initialData?.currency || 'USD'
   });
 
   useEffect(() => {
     if (initialData) {
       setFormData({
-        date: initialData.date,
+        date: formatForDateInput(initialData.date),
         type: initialData.type,
         symbol: initialData.symbol,
         name: initialData.name,
@@ -189,7 +207,14 @@ const TransactionForm: React.FC<TransactionFormProps> = ({ onSave, onClose, init
             </div>
             <div>
               <label className="block text-slate-700 text-xs font-bold mb-1">Account</label>
-              <input name="account" type="text" placeholder="TFSA" value={formData.account} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
+              <input list="account-options" name="account" type="text" placeholder="TFSA" value={formData.account} onChange={handleChange} className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
+              {existingAccounts.length > 0 && (
+                <datalist id="account-options">
+                  {existingAccounts.map(acc => (
+                    <option key={acc} value={acc} />
+                  ))}
+                </datalist>
+              )}
             </div>
             <div>
               <label className="block text-slate-700 text-xs font-bold mb-1">Exchange</label>

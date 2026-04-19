@@ -41,7 +41,7 @@ const DataManagementModal: React.FC<DataManagementModalProps> = ({ transactionsC
                         <span className="text-2xl font-black text-slate-800">{transactionsCount}</span>
                         <span className="text-sm text-slate-500 font-medium">Transactions Cached</span>
                     </div>
-                    <p className="text-[10px] text-slate-400 mt-2">Data is isolated to your current Auth0 login and stored in your browser's LocalStorage.</p>
+                <p className="text-[10px] text-slate-400 mt-2">Data is securely synced to the cloud for your Auth0 account and cached locally.</p>
                 </div>
 
                 {/* Actions */}
@@ -64,7 +64,7 @@ const DataManagementModal: React.FC<DataManagementModalProps> = ({ transactionsC
                     <div className="relative group">
                         <button 
                             onClick={() => {
-                                if (window.confirm("Are you sure you want to wipe all cached transactions for this account? This cannot be undone.")) {
+                            if (window.confirm("Are you sure you want to permanently delete all transactions for this account? This will erase them from the cloud and cannot be undone.")) {
                                     onClearCache();
                                 }
                             }}
@@ -75,8 +75,8 @@ const DataManagementModal: React.FC<DataManagementModalProps> = ({ transactionsC
                                     <Trash2 size={18} className="text-slate-600 group-hover:text-rose-600" />
                                 </div>
                                 <div className="text-left">
-                                    <p className="text-sm font-bold text-slate-800">Clear Account Cache</p>
-                                    <p className="text-[10px] text-slate-500">Remove all data from this browser</p>
+                                <p className="text-sm font-bold text-slate-800">Delete All Account Data</p>
+                                <p className="text-[10px] text-slate-500">Permanently remove all data from cloud & browser</p>
                                 </div>
                             </div>
                         </button>
@@ -86,7 +86,7 @@ const DataManagementModal: React.FC<DataManagementModalProps> = ({ transactionsC
                 <div className="mt-6 flex items-start gap-3 p-3 bg-amber-50 border border-amber-100 rounded-lg">
                     <AlertTriangle size={16} className="text-amber-500 shrink-0 mt-0.5" />
                     <p className="text-[10px] text-amber-700 leading-normal font-medium">
-                        Your portfolio data is not stored on a central server. Clearing your browser cache or using a different browser will hide your history until you re-import your backup.
+                    Your portfolio data is securely backed up to the cloud. Deleting your data here will permanently erase it from our servers. Please export a backup first.
                     </p>
                 </div>
             </div>
